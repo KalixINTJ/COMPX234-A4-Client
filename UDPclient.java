@@ -71,6 +71,94 @@ public class UDPclient
         System.out.println("Receive: " + response);
         return response;
     }
+    //To download the specified file.
+    public void downloadFile(String filename) 
+    {
+        try 
+        {
+            System.out.println("Start downloading the file: " + filename);
+            String downloadRequest = "DOWNLOAD " + filename;
+            //To send requests and receive responses from the server.
+            String response = sendAndReceive(downloadRequest, sHost, sPort);
+            if (response.startsWith("ERR")) 
+            {
+                System.out.println("Error: " + response);
+                return;
+            }
+            if (response.startsWith("OK")) 
+            {
+                //To find the positions of the keywords "SIZE" and "PORT".
+                int sizeIndex = response.indexOf("SIZE");
+                int portIndex = response.indexOf("PORT");
+                if (sizeIndex == -1 || portIndex == -1) 
+                {
+                    System.out.println("Error: " + response);
+                    return;
+                }
+                //To extract the file size and transfer port.
+                String sizeStr = response.substring(sizeIndex + 5, portIndex).trim();
+                String portStr = response.substring(portIndex + 5).trim();
+                long fileSize;
+                int transferPort;
+                try 
+                {
+                    //To parse the file size and transfer port.
+                    fileSize = Long.parseLong(sizeStr);
+                    transferPort = Integer.parseInt(portStr);
+                } 
+                catch (NumberFormatException e) 
+                {
+                    System.out.println("Error: " + response);
+                    return;
+                }
+                System.out.println("The server accepts the download request. File size:" + fileSize + "Byte, transmission port: :" + transferPort);
+                //To create a local file.
+                try (FileOutputStream fileOutputStream = new FileOutputStream(filename)) 
+                {
+                    long bytesReceived = 0;
+                    //To receive file data blocks in a loop until the entire file is received.
+                    while (bytesReceived < fileSize) 
+                    {
+                        //To calculate the start and end bytes of the current data block.
+                        long start = bytesReceived;
+                        long end = Math.min(start + bufferSize  - 1, fileSize - 1);
+                        String fileRequest = "FILE " + filename + " GET START " + start + " END " + end;
+                        //To send requests and receive responses.
+                        String fileResponse = sendAndReceive(fileRequest, sHost, transferPort);
+                        if (fileResponse.startsWith("FILE") && fileResponse.contains("OK")) 
+                        {
+                            int dataIndex = fileResponse.indexOf("DATA") + 5;
+                            if (dataIndex < 5) 
+                            {
+                                System.out.println("Invalid data response format: " + fileResponse);
+                                return;
+                            }
+                            String dataStr = fileResponse.substring(dataIndex).trim();
+                            byte[] data = dataStr.getBytes();
+                            //To write the decoded data to the local file.
+                            fileOutputStream.write(data);
+                            bytesReceived += data.length;
+                            System.out.print("*");
+                        } 
+                        else 
+                        {
+                            System.out.println("Invalid file data response: " + fileResponse);
+                            return;
+                        }
+                    }
+                    System.out.println("\nFile download completed: " + filename);
+                }
+            } 
+            else 
+            {
+                System.out.println("Error: " + response);
+            }
+        } 
+        catch (IOException e) 
+        {
+            System.err.println("Error occurred when downloading the file: " + e.getMessage());
+        }
+    }
     public void run()
     {
         try
@@ -79,7 +167,7 @@ public class UDPclient
             List<String> files = readFileList(fileListName);
             for(String file : files)
             {
-                //To traverse the file list and download each file in sequence.
+                downloadFile(file);
             }
         }
         catch(IOException e)
