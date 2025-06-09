@@ -5,15 +5,19 @@ import java.util.*;
 public class UDPclient
 {
     //The data block size (1000 bytes).
-    public int bufferSize = 1000;
+    public static int bufferSize = 1000;
     //The hostname and port number of the server, as well as the list of files containing the file names to be downloaded.
-    public String sHost;
-    public int sPort;
-    public String fileListName;
+    public static String sHost;
+    public static int sPort;
+    public static String fileListName;
     //The UDP socket, used for communication.
-    public DatagramSocket cSocket;
+    public static DatagramSocket cSocket;
     //Make sure there is enough space to receive these data packets.
-    public int bigBufferSize = 10000;
+    public static int bigBufferSize = 10000;
+    //Timeout period(2000 ms).
+    public static int time = 2000;
+    //Maximum number of retries.
+    public static int maxTry = 5; 
 
     public UDPclient(String h, int p, String f)
     {
@@ -63,14 +67,34 @@ public class UDPclient
         DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, sAdress, p);
         byte[] rBuffer = new byte[bigBufferSize];
         DatagramPacket receivPacket = new DatagramPacket(rBuffer, rBuffer.length);
-        //To send data packets and receive responses from the server.
-        cSocket.send(sendPacket);
-        System.out.println("Send: " + m);
-        cSocket.receive(receivPacket);
-        String response = new String(receivPacket.getData(), 0, receivPacket.getLength());
-        System.out.println("Receive: " + response);
-        return response;
-    }
+        //To initialize the retry count and the current timeout time.
+        int retries = 0;
+        int cTimeout = time;
+
+        while (retries < maxTry) 
+        {
+            try 
+            {
+                //To send data packets and receive responses from the server.
+                cSocket.send(sendPacket);
+                System.out.println("Send: " + m);
+                cSocket.receive(receivPacket);
+                String response = new String(receivPacket.getData(), 0, receivPacket.getLength());
+                System.out.println("Receive: " + response);
+                return response;
+            } 
+            catch (SocketTimeoutException e) 
+            {
+                //If a timeout occurs, increase the retry count and adopt an exponential backoff strategy.
+                retries++;
+                System.out.println("Attempt to retransmit...(" + retries + "/" + maxTry + ")");
+                //Exponential retreat.
+                cTimeout *= 2;
+                cSocket.setSoTimeout(cTimeout);
+            }
+        }
+        throw new IOException("Reach the maximum number of retransmissions.");
+     }
     //To download the specified file.
     public void downloadFile(String filename) 
     {
@@ -133,12 +157,25 @@ public class UDPclient
                                 System.out.println("Invalid data response format: " + fileResponse);
                                 return;
                             }
-                            String dataStr = fileResponse.substring(dataIndex).trim();
-                            byte[] data = dataStr.getBytes();
+                            String encodedData = fileResponse.substring(dataIndex).trim();
+                            //To decode data.
+                            byte[] data;
+                            try 
+                            {
+                                data = Base64.getDecoder().decode(encodedData);
+                            } 
+                            catch (IllegalArgumentException e) 
+                            {
+                                System.out.println("Error: " + e.getMessage());
+                                return;
+                            }
                             //To write the decoded data to the local file.
                             fileOutputStream.write(data);
                             bytesReceived += data.length;
+                            //To show progress.
                             System.out.print("*");
+                            double progress = (double) bytesReceived / fileSize * 100;
+                            System.out.print(String.format(" %.1f%%\r", progress));
                         } 
                         else 
                         {
@@ -147,6 +184,18 @@ public class UDPclient
                         }
                     }
                     System.out.println("\nFile download completed: " + filename);
+                    //To send a closing request and wait for a response.
+                    String closeRequest = "FILE " + filename + " CLOSE";
+                    String closeResponse = sendAndReceive(closeRequest, sHost, transferPort);
+
+                    if (closeResponse.startsWith("FILE") && closeResponse.contains("CLOSE_OK")) 
+                    {
+                        System.out.println("The transmission connection has been normally closed.");
+                    } 
+                    else 
+                    {
+                        System.out.println("Error: " + closeResponse);
+                    }
                 }
             } 
             else 
@@ -176,7 +225,7 @@ public class UDPclient
         }
     }
 
-    public void main(String[] args) 
+    public static void main(String[] args) 
     {
         if(args.length != 3)
         {
